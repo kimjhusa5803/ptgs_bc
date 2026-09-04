@@ -8,7 +8,7 @@ version = "0.0.1.dev0"
 description = "Bayesian-computing polygenic transcriptomic scores (PTGS) on GReX, benchmarked against an elastic-net baseline."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",

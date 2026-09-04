@@ -1,13 +1,31 @@
-# Controlled data — NEVER commit real GReX / phenotypes (mock-local policy)
+# === Controlled data — NEVER commit real GReX / phenotypes (mock-local policy) ===
 data/
+real_*/
+# tabular data files (real GReX / phenotype tables must never be committed)
+*.csv
+*.tsv
+*.parquet
+*.xlsx
+# domain filetypes (GReX-adjacent genetics data, if a step ever emits them)
 *.grex
 *.pheno
 *.bgen
+*.bed
+*.bim
+*.fam
+*.pgen
+*.pvar
+*.psam
 *.vcf
 *.vcf.gz
-real_*/
+*.bcf
+*.tbi
+*.csi
+# (If you later commit fully-synthetic fixtures, add an exception, e.g.:
+#   !sample_data/
+#   !sample_data/** )
 
-# Python
+# === Python ===
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -19,19 +37,31 @@ venv/
 env/
 .ipynb_checkpoints/
 
-# Artifacts / outputs (regenerated)
+# === Tooling caches ===
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# === Artifacts / outputs (regenerated) ===
 out/
 results/
 *.joblib
 *.pkl
+*.npz
+*.nc          # ArviZ / MCMC posterior traces
 
-# Secrets
+# === Secrets (NEVER commit) ===
 *.key
+*.pem
 *.token
+*.credentials
+credentials*.json
 .env
 .env.*
 
-# OS / editor
+# === OS / editor ===
 .DS_Store
 .idea/
 .vscode/
