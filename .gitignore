@@ -25,6 +25,9 @@ real_*/
 #   !sample_data/
 #   !sample_data/** )
 
+# === External reference material (not for VCS) ===
+reference/
+
 # === Python ===
 __pycache__/
 *.py[cod]
