@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptgs_bc"
-version = "0.0.1.dev0"
+version = "0.1.0"
 description = "Bayesian-computing polygenic transcriptomic scores (PTGS) on GReX, benchmarked against an elastic-net baseline."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,6 +24,7 @@ dev = [
     "jupyter",
     "ipykernel",
     "matplotlib>=3.7",
+    "seaborn>=0.12",
 ]
 
 [project.scripts]

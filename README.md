@@ -58,3 +58,9 @@ reference/     the PTRS paper (s13059-021-02591-w.pdf)
 ```
 
 Rule: reusable methodology lives in the package; notebooks import it, orchestrate, and analyze.
+
+## Evaluation roadmap
+
+See **`docs/ROADMAP.md`**: Phase 0 iid mock (done) → Phase 1 simulated **TWAS GReX**
+(`simulate_twas.py`, realistic gene–gene correlation) → Phase 2 real **local GReX + phenotype**
+(controlled; `io.load_dataset` + the local→cloud workflow).

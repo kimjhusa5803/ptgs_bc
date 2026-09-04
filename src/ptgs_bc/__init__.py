@@ -17,7 +17,7 @@ stays fast.
 
 from __future__ import annotations
 
-__version__ = "0.0.1.dev0"
+__version__ = "0.1.0"
 
 from .benchmark import per_fold_table, run_benchmark, summary_table
 from .builders import BayesBuilder, Builder, ElasticNetBuilder
@@ -27,11 +27,15 @@ from .metrics import evaluate, partial_r2
 from .results import BenchmarkResult, FoldResult, ScoreBundle
 from .score import compute_score, score_dataset
 from .simulate import simulate_dataset
+from .simulate_twas import simulate_twas_dataset
+from .tuning import bayes_p0_sweep, compare_priors, enet_cv_path
+from .viz import (plot_comparison, plot_enet_path, plot_paired_scatter,
+                  plot_param_sweep, plot_performance, plot_prior_comparison)
 
 __all__ = [
     "__version__",
     # data
-    "Dataset", "load_dataset", "simulate_dataset",
+    "Dataset", "load_dataset", "simulate_dataset", "simulate_twas_dataset",
     # builders
     "Builder", "ElasticNetBuilder", "BayesBuilder",
     # evaluation
@@ -39,4 +43,9 @@ __all__ = [
     "compute_score", "score_dataset", "evaluate", "partial_r2",
     # results
     "ScoreBundle", "FoldResult", "BenchmarkResult",
+    # tuning
+    "enet_cv_path", "bayes_p0_sweep", "compare_priors",
+    # visualization
+    "plot_performance", "plot_comparison", "plot_paired_scatter",
+    "plot_enet_path", "plot_param_sweep", "plot_prior_comparison",
 ]

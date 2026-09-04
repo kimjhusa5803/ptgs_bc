@@ -45,15 +45,30 @@ class BayesBuilder(Builder):
 
     def __init__(self, prior: str = "regularized_horseshoe", inference: str = "nuts",
                  num_warmup: int = 500, num_samples: int = 500, num_chains: int = 1,
+                 target_accept: float = 0.9, p0: float | None = None, sigma: float | None = None,
                  svi_steps: int = 20000, hyper: dict | None = None):
         self.prior = prior
         self.inference = inference
         self.num_warmup = num_warmup
         self.num_samples = num_samples
         self.num_chains = num_chains
+        self.target_accept = target_accept   # raise for horseshoe's funnel geometry (fewer divergences)
+        self.p0 = p0                          # prior guess of #associated genes -> global scale tau0
+        self.sigma = sigma                    # noise scale for tau0 (gaussian: est. from y; logistic: 2)
         self.svi_steps = svi_steps
         self.hyper = hyper or {}
-        self.name = f"bayes[{prior}]"
+        self.name = f"bayes[{prior}]" + (f",p0={p0}" if p0 is not None else "")
+
+    def _resolve_hyper(self, X, y, family) -> dict:
+        """Derive the regularized-horseshoe global scale tau0 from p0 (Piironen-Vehtari)."""
+        import numpy as np
+        hyper = dict(self.hyper)
+        if self.p0 is not None and "tau0" not in hyper:
+            D, n = X.shape[1], X.shape[0]
+            sigma = self.sigma if self.sigma is not None else (
+                float(np.std(y)) if family == "gaussian" else 2.0)
+            hyper["tau0"] = (self.p0 / max(D - self.p0, 1)) * sigma / np.sqrt(n)
+        return hyper
 
     def fit(self, train_ds: Dataset, seed: int = 0) -> ScoreBundle:
         import jax
@@ -69,7 +84,8 @@ class BayesBuilder(Builder):
             y = train_ds.y.to_numpy(float)
             C_model = C                          # adjust inside the logistic model
 
-        post = self._infer(Xs, C_model, y, train_ds.family, seed)
+        hyper = self._resolve_hyper(Xs, y, train_ds.family)
+        post = self._infer(Xs, C_model, y, train_ds.family, seed, hyper)
         beta_mean = np.asarray(post["beta"].mean(axis=0))
         beta_sd = np.asarray(post["beta"].std(axis=0))
         intercept_std = float(np.asarray(post["intercept"]).mean())
@@ -79,10 +95,11 @@ class BayesBuilder(Builder):
             weights=w_raw, genes=train_ds.genes, intercept=b_raw,
             family=train_ds.family, builder=self.name, seed=seed,
             extras={"posterior_sd_std_scale": beta_sd, "prior": self.prior,
-                    "inference": self.inference, "chosen": {"prior": self.prior}},
+                    "inference": self.inference,
+                    "chosen": {"prior": self.prior, "p0": self.p0, **hyper}},
         )
 
-    def _infer(self, X, C, y, family, seed):
+    def _infer(self, X, C, y, family, seed, hyper):
         import jax
         import jax.numpy as jnp
         import numpyro
@@ -90,10 +107,11 @@ class BayesBuilder(Builder):
         key = jax.random.PRNGKey(seed)
         Xj = jnp.asarray(X); yj = jnp.asarray(y)
         Cj = None if C is None else jnp.asarray(C)
-        args = (Xj, Cj, yj, family, self.prior, self.hyper)
+        args = (Xj, Cj, yj, family, self.prior, hyper)
 
         if self.inference == "nuts":
-            mcmc = MCMC(NUTS(_model), num_warmup=self.num_warmup,
+            mcmc = MCMC(NUTS(_model, target_accept_prob=self.target_accept),
+                        num_warmup=self.num_warmup,
                         num_samples=self.num_samples, num_chains=self.num_chains,
                         progress_bar=False)
             mcmc.run(key, *args)
