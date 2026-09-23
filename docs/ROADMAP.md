@@ -71,11 +71,94 @@ dedicated notebook yet — these are backend models awaiting evaluation on real 
 user until the current correlation/discovery-focused goals are done). Cross-tissue `Dataset`
 support is also deferred, to be picked up after the current objective.
 
-## Phase 2 — real local GReX + phenotype  (entry: `io.load_dataset`)
+## Phase 2 — real local GReX + phenotype  (Milestone v0.3.0; entry: `io.load_dataset`)
 Run on the **local cohort biobank's** GReX + phenotype (controlled/PHI). Develop locally on
 Phase‑0/1 mock, then execute in the governed environment — the `cloud-dev-workflow` (code to
-GitHub, run in cloud, results/errors back as text; data never moves). Deliverable: a real‑run
-notebook + a firmed‑up `io.load_dataset` for the actual file formats.
+GitHub, run in cloud, results/errors back as text; data never moves).
+
+**Ordered sub-goals (agreed 2026-09-23; work through them in this order, don't skip ahead):**
+
+1. **Real-data I/O.** Finish `io.load_dataset` for real GReX + phenotype/covariate files.
+   GReX uncertainty/variation is a **default** consideration for this real-data path — unlike
+   simulated data, where it stays out of scope — and may require an architecture change to
+   `Dataset`/`Builder` (errors-in-variables), not just a bolt-on. Exact representation (per-
+   sample SE vs. posterior draws vs. a reliability score) is undecided on purpose: build a
+   generic/flexible slot now, refine once the user supplies real file metadata (headers,
+   sample sizes, gene counts, tissue types) and once an actual run surfaces problems. **Claude
+   leads this by asking the user one question at a time — logged below so nothing is re-asked
+   or forgotten.** Trait/phenotype data **will be provided by the user** (resolved
+   2026-09-23) — the promised model comparison (`partial_r2`, WAIC, `nested_cv`/
+   `run_benchmark`) is inherently supervised and needs it; this is not deferred.
+2. **Validate all 7 priors on simulated data.** `spike_slab`/`graph_spike_slab` were verified
+   only via integration tests (Phase 1.6) — no dedicated notebook yet. Build the missing
+   simulated-data comparison notebook so every current prior has been benchmarked against
+   elastic net before real data enters the picture.
+3. **Structured priors from real biological knowledge.** Replace the oracle/synthetic
+   correlation and groups with real biological input. Needs discussion — **two separate
+   sub-decisions, not one:**
+   - `group_horseshoe` wants discrete gene→group membership (e.g. pathway sets from
+     MSigDB/KEGG/Reactome).
+   - `graph_horseshoe`/`graph_spike_slab` want a gene-gene correlation-like matrix (e.g. a PPI
+     network like STRING, or a co-expression atlas like GTEx).
+   Database choice, gene-ID conventions, and how each maps into `hyper["groups"]` /
+   `hyper["corr"]` are all open.
+4. **Cloud-dev-workflow packaging.** A streamlined, repeatable per-model run+evaluation
+   script/notebook template, handed to the user to execute themselves in the secured
+   environment; errors come back as text for Claude to fix (data never moves).
+
+### Real-data I/O Q&A (sub-goal 1) — answered so far
+_Claude asks one question at a time; log each answer here immediately so it's never re-asked._
+- **Q1 (2026-09-23):** GReX file structure — file format, orientation (genes×samples vs.
+  samples×genes), gene-ID convention, sample-ID convention. **Answered:** wide format, one row
+  per sample; first column `GRID` (Vanderbilt BioVU-style de-identified subject ID, single
+  column, no separate FID/IID split); remaining columns are genes, header = bare Ensembl gene
+  ID with no version suffix (e.g. `ENSG00000002549`). Delimiter/file extension (tab vs.
+  comma/space; `.txt`/`.tsv`/`.csv`) not yet confirmed — paste rendering is ambiguous here.
+- **Q2 (2026-09-23):** Phenotype/covariate file structure — same `GRID` join key? What columns
+  (trait, PCs, age, sex, etc.)? File format. **Answered:** `GRID` is shared with the GReX file;
+  covariate columns vary and must be caller-supplied, never hardcoded by name.
+  `io.load_dataset`'s existing `covar_cols: list[str]` / `sample_col` params already satisfy
+  this — no column names are assumed anywhere in the loader. Extended `load_dataset` with an
+  optional `grex_uncertainty_path` that plumbs an uncertainty table straight into
+  `Dataset.meta["grex_uncertainty"]` with no shape assumed yet (per sub-goal 1's default-
+  uncertainty requirement). Added `tests/test_io.py` using synthetic files shaped like the real
+  ones (`GRID` + bare Ensembl IDs, tab-delimited GReX / comma-delimited phenotype, mismatched
+  sample sets, the uncertainty path) — all pass, plus the full 35-test suite. Delimiter/file
+  extension confirmation still open but no longer blocking: the loader auto-detects it.
+- **Sample-mismatch policy (2026-09-23, explicit user instruction):** always use the
+  intersection of GReX/phenotype sample sets (no error, no opt-out) — but `load_dataset` must
+  inform the caller when a mismatch happens. Implemented as a `UserWarning` naming how many
+  samples were GReX-only vs. phenotype-only and how many survived in the intersection. Test
+  added confirming the warning fires on mismatch and stays silent when sets match exactly.
+  36/36 tests pass.
+- **Q3 (2026-09-23):** Is the sample-ID column name shared between GReX and phenotype/trait
+  files within one cohort? **Answered: yes** — the ID column is cohort-dependent (`GRID` for
+  VUMC, a different convention for AoU, etc.) but consistent across a given cohort's own files.
+  No crosswalk/linking table needed. The existing single `sample_col` parameter (caller-
+  supplied per cohort, never hardcoded) already covers this correctly — no code change needed.
+- **Q4 (2026-09-23):** Is the trait file the same file as the covariate/PC file, or separate?
+  **Answered:** same single file, called the "phenotype file" (trait + covariates together,
+  as originally assumed) — no separate `trait_path` needed. Trait coding (continuous values vs.
+  `1`/`0` case-control) maps directly onto the existing `Dataset.family` (`"gaussian"` /
+  `"binomial"`) — no loader change needed there either.
+- **Sub-goal 1 status:** `io.load_dataset` design is now validated against every real-data
+  question raised so far (file shape, ID column, covariate flexibility, mismatch handling,
+  trait/covariate co-location, GReX uncertainty plumbing) with no further code changes pending.
+  Remaining: the actual trait/covariate column names for a real run (caller supplies these at
+  call time), and the still-undecided GReX uncertainty representation shape (deferred; generic
+  `meta["grex_uncertainty"]` slot already in place).
+
+**Reordering (2026-09-23, explicit user instruction):** testing the currently-available models
+against real GReX is NOT deferred to after sub-goal 2/3 — it happens as soon as sub-goal 1's
+loader is validated, in parallel with (not after) validating the newer priors on simulated
+data. Added `notebooks/07_real_data_baseline.ipynb`: mirrors notebooks 02-04 (elastic net +
+`regularized_horseshoe`/`horseshoe`/`bayesian_lasso`) but loads via `io.load_dataset` instead
+of `simulate_dataset`. Has a clearly-marked config cell (file paths, `sample_col`, `trait`,
+`covar_cols`, `family`) that raises if left unedited — meant to be filled in and run in the
+secured environment (`cloud-dev-workflow`), with errors reported back as text. No real data
+or output should ever be committed — the notebook carries an explicit reminder to clear outputs
+first. **Structured-prior notebooks on real data (sub-goal 3) are the step after this one runs
+successfully** — not before.
 
 ## Strategy (2026-09-04) — use both arms, select the winner per regime
 
@@ -90,10 +173,10 @@ select the winning arm for the expected data regime**, guided by simulation:
 The shared harness + pluggable builders already support this directly.
 
 ## Open decisions / inputs needed
-- **Phase 2 data:** GReX file format (e.g. PrediXcan/predictdb genes×samples output), phenotype
-  format, the trait(s) + covariates, approx dimensions (n_genes, n_samples), and where it runs
-  (Terra / UKB RAP / local controlled) — to set up the cloud bridge.
-- **Multi-tissue `Dataset` support** (deferred until the current correlation/discovery goals
-  are done) and **GReX-estimation-uncertainty propagation** (errors-in-variables — GReX is
-  currently treated as fixed/observed by every builder and prior in this package, including
-  `spike_slab`/`graph_spike_slab`) are identified next steps, not yet started.
+- **Phase 2 data specifics** are tracked question-by-question in the "Real-data I/O Q&A" log
+  under Phase 2 sub-goal 1 above — don't guess these, ask the user when needed.
+- **Multi-tissue `Dataset` support** remains deferred until the current correlation/discovery
+  goals are done.
+- **GReX-estimation-uncertainty propagation** (errors-in-variables) is **no longer deferred** —
+  it's Phase 2 sub-goal 1's default requirement for the real-data path (see above); simulated
+  data paths are unaffected.
