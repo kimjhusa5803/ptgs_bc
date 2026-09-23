@@ -6,8 +6,8 @@ pytest.importorskip("matplotlib")
 import matplotlib
 matplotlib.use("Agg")  # headless
 
-from ptgs_bc import (ElasticNetBuilder, plot_comparison, plot_paired_scatter,
-                     plot_performance, run_benchmark, simulate_dataset)
+from ptgs_bc import (ElasticNetBuilder, plot_comparison, plot_corr_recovery,
+                     plot_paired_scatter, plot_performance, run_benchmark, simulate_dataset)
 from ptgs_bc.builders.base import Builder
 from ptgs_bc.results import ScoreBundle
 import numpy as np
@@ -48,3 +48,14 @@ def test_paired_scatter_requires_two_arms():
     one = run_benchmark([ElasticNetBuilder()], ds, outer_k=5, seed=0)
     with pytest.raises(ValueError):
         plot_paired_scatter(one)
+
+
+def test_plot_corr_recovery_returns_axes():
+    rng = np.random.default_rng(0)
+    n = 10
+    true_corr = np.eye(n)
+    est_corr = true_corr + rng.normal(0, 0.05, size=(n, n))
+    est_corr = (est_corr + est_corr.T) / 2
+    ax = plot_corr_recovery(true_corr, est_corr)
+    assert ax is not None
+    assert "RMSE" in ax.get_title()

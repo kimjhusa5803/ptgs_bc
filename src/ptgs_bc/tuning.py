@@ -43,12 +43,18 @@ def bayes_p0_sweep(ds: Dataset, p0_values, outer_k: int = 3, seed: int = 0, **ba
 def compare_priors(ds: Dataset,
                    priors=("regularized_horseshoe", "horseshoe", "bayesian_lasso"),
                    p0: float | None = None, seed: int = 0,
-                   num_warmup: int = 400, num_samples: int = 400, **bayes_kw):
+                   num_warmup: int = 400, num_samples: int = 400,
+                   hyper_overrides: dict[str, dict] | None = None, **bayes_kw):
     """Fit each prior on the full data and compare by WAIC (from the pointwise log-likelihood).
 
     Cheaper than nested-CV refits: one MCMC per prior on the training set, then out-of-sample
     predictive accuracy is estimated by WAIC (self-contained; no ArviZ). Returns
     (compare_df ranked best-first by elpd_waic, log_lik dict {prior: (draws × obs)}).
+
+    `hyper_overrides`: optional `{prior_name: {hyper_key: value}}`, merged into that prior's
+    resolved hyper before fitting — needed for priors that take a matrix/array hyperparameter
+    the shared `**bayes_kw` can't express (e.g. `graph_horseshoe`'s `corr`, `group_horseshoe`'s
+    `groups`), since those differ per prior rather than being a single shared knob like `p0`.
     """
     import jax
     import jax.numpy as jnp
@@ -73,6 +79,8 @@ def compare_priors(ds: Dataset,
         b = BayesBuilder(prior=prior, p0=p0, num_warmup=num_warmup,
                          num_samples=num_samples, **bayes_kw)
         hyper = b._resolve_hyper(Xs, y, ds.family)
+        if hyper_overrides and prior in hyper_overrides:
+            hyper = {**hyper, **hyper_overrides[prior]}
         mcmc = MCMC(NUTS(_model, target_accept_prob=b.target_accept),
                     num_warmup=num_warmup, num_samples=num_samples,
                     num_chains=1, progress_bar=False)

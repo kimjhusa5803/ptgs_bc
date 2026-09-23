@@ -46,7 +46,8 @@ class BayesBuilder(Builder):
     def __init__(self, prior: str = "regularized_horseshoe", inference: str = "nuts",
                  num_warmup: int = 500, num_samples: int = 500, num_chains: int = 1,
                  target_accept: float = 0.9, p0: float | None = None, sigma: float | None = None,
-                 svi_steps: int = 20000, hyper: dict | None = None):
+                 svi_steps: int = 20000, hyper: dict | None = None,
+                 corr=None, corr_estimate: bool = False):
         self.prior = prior
         self.inference = inference
         self.num_warmup = num_warmup
@@ -57,17 +58,42 @@ class BayesBuilder(Builder):
         self.sigma = sigma                    # noise scale for tau0 (gaussian: est. from y; logistic: 2)
         self.svi_steps = svi_steps
         self.hyper = hyper or {}
-        self.name = f"bayes[{prior}]" + (f",p0={p0}" if p0 is not None else "")
+        self.corr = corr                      # oracle gene-gene correlation (graph_horseshoe); reused as-is every fold
+        self.corr_estimate = corr_estimate    # if True and no corr/hyper["corr"] given, estimate per-fold from train X
+        tag = f",p0={p0}" if p0 is not None else ""
+        if prior in ("graph_horseshoe", "graph_spike_slab"):
+            # disambiguate oracle vs. estimated vs. hyper-supplied corr -- otherwise two
+            # builders differing only in corr source collide on `.name` and `run_benchmark`'s
+            # dict-by-name silently drops one of them.
+            tag += ",corr=est" if corr_estimate else (
+                ",corr=oracle" if corr is not None else ",corr=hyper")
+        self.name = f"bayes[{prior}]" + tag
 
     def _resolve_hyper(self, X, y, family) -> dict:
-        """Derive the regularized-horseshoe global scale tau0 from p0 (Piironen-Vehtari)."""
+        """Derive per-fit hyperparameters that depend on the training data.
+
+        - regularized-horseshoe global scale tau0 from p0 (Piironen-Vehtari).
+        - spike_slab/graph_spike_slab's `pi0` from p0 (expected # causal genes / n_genes) --
+          same p0 ergonomics as every other prior, just a different derived hyperparameter.
+        - graph_horseshoe's `corr`: the oracle matrix if given, else (if `corr_estimate`) a
+          Ledoit-Wolf estimate from THIS fold's training GReX only (no CV leakage).
+        """
         import numpy as np
         hyper = dict(self.hyper)
-        if self.p0 is not None and "tau0" not in hyper:
+        if self.p0 is not None and self.prior in ("spike_slab", "graph_spike_slab"):
+            if "pi0" not in hyper:
+                hyper["pi0"] = self.p0 / X.shape[1]
+        elif self.p0 is not None and "tau0" not in hyper:
             D, n = X.shape[1], X.shape[0]
             sigma = self.sigma if self.sigma is not None else (
                 float(np.std(y)) if family == "gaussian" else 2.0)
             hyper["tau0"] = (self.p0 / max(D - self.p0, 1)) * sigma / np.sqrt(n)
+        if "corr" not in hyper:
+            if self.corr is not None:
+                hyper["corr"] = self.corr
+            elif self.corr_estimate:
+                from ..structure import estimate_gene_correlation
+                hyper["corr"] = estimate_gene_correlation(X)
         return hyper
 
     def fit(self, train_ds: Dataset, seed: int = 0) -> ScoreBundle:
@@ -91,12 +117,18 @@ class BayesBuilder(Builder):
         intercept_std = float(np.asarray(post["intercept"]).mean())
 
         w_raw, b_raw = to_raw_weights(beta_mean, intercept_std, mu, sd)
+        extras = {"posterior_sd_std_scale": beta_sd, "prior": self.prior,
+                 "inference": self.inference,
+                 "chosen": {"prior": self.prior, "p0": self.p0, **hyper}}
+        if self.prior in ("spike_slab", "graph_spike_slab"):
+            from ..priors import spike_slab_pip
+            pi = np.asarray(post["pi"]) if "pi" in post else hyper.get("pi0", 0.1)
+            extras["pip"] = spike_slab_pip(
+                post["beta"], pi, hyper.get("spike_scale", 0.01), hyper.get("slab_scale", 1.0))
         return ScoreBundle(
             weights=w_raw, genes=train_ds.genes, intercept=b_raw,
             family=train_ds.family, builder=self.name, seed=seed,
-            extras={"posterior_sd_std_scale": beta_sd, "prior": self.prior,
-                    "inference": self.inference,
-                    "chosen": {"prior": self.prior, "p0": self.p0, **hyper}},
+            extras=extras,
         )
 
     def _infer(self, X, C, y, family, seed, hyper):

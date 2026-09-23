@@ -60,11 +60,18 @@ def simulate_twas_dataset(
     # 2-3. per-gene predicted expression (GReX) from sparse cis-eQTL weights
     grex = np.empty((n_samples, n_genes))
     n_eqtl = max(1, round(eqtl_sparsity * n_snps_per_gene))
+    window_start = np.empty(n_genes, dtype=int)
+    eqtl_idx = np.empty((n_genes, n_eqtl), dtype=int)      # local (within-window) SNP index
+    eqtl_weight = np.empty((n_genes, n_eqtl), dtype=float)
     for g in range(n_genes):
         s = g * step
         win = G[:, s:s + n_snps_per_gene]
         idx = rng.choice(n_snps_per_gene, size=n_eqtl, replace=False)
-        gc = win[:, idx] @ rng.standard_normal(n_eqtl)
+        w = rng.standard_normal(n_eqtl)
+        window_start[g] = s
+        eqtl_idx[g] = idx
+        eqtl_weight[g] = w
+        gc = win[:, idx] @ w
         gc = (gc - gc.mean()) / (gc.std() + 1e-8)
         if expr_pred_r2 < 1.0:
             gc = np.sqrt(expr_pred_r2) * gc + np.sqrt(1 - expr_pred_r2) * rng.standard_normal(n_samples)
@@ -98,6 +105,41 @@ def simulate_twas_dataset(
         y=pd.Series(y_vals, index=samples, name="trait"),
         covars=covars, family=family,
         meta={"seed": seed, "n_causal_genes": n_causal_genes, "causal_idx": causal.tolist(),
-              "ld_rho": ld_rho, "window_overlap": window_overlap, "trait_pve": trait_pve},
+              "ld_rho": ld_rho, "window_overlap": window_overlap, "trait_pve": trait_pve,
+              "expr_pred_r2": expr_pred_r2, "window_start": window_start,
+              "eqtl_idx": eqtl_idx, "eqtl_weight": eqtl_weight},
     )
     return ds, true_w
+
+
+def true_grex_correlation(meta: dict) -> np.ndarray:
+    """Closed-form population correlation of GReX columns, from `simulate_twas_dataset`'s meta.
+
+    No simulation/Monte Carlo involved — this is the exact oracle, useful as an upper bound
+    for `graph_horseshoe` and as ground truth for validating `structure.estimate_gene_correlation`.
+
+    Derivation: the AR(1) genotype process has `Cov(G_i, G_j) = ld_rho**|i-j|` exactly (each
+    `G[:, j]` is unit-variance by construction). Gene g's raw pre-standardization signal is a
+    fixed linear combination `w_g` of its window's SNPs, so
+    `Cov(raw_g, raw_h) = w_g^T [ld_rho**|pos_g_k - pos_h_l|]_{k,l} w_h`. Prediction noise
+    (`expr_pred_r2 < 1`) is drawn independently per gene, so it dilutes cross-gene correlation
+    by exactly `expr_pred_r2` (variance stays 1 after the code's renormalization) while leaving
+    the diagonal at 1.
+    """
+    ld_rho = meta["ld_rho"]
+    r2 = meta.get("expr_pred_r2", 1.0)
+    window_start = np.asarray(meta["window_start"])
+    eqtl_idx = np.asarray(meta["eqtl_idx"])
+    eqtl_weight = np.asarray(meta["eqtl_weight"])
+    n_genes = len(window_start)
+
+    pos = window_start[:, None] + eqtl_idx                       # (n_genes, n_eqtl) absolute SNP index
+    diff = pos[:, None, :, None] - pos[None, :, None, :]         # diff[g,h,k,l] = pos[g,k]-pos[h,l]
+    rho_block = ld_rho ** np.abs(diff)                           # (n_genes, n_genes, n_eqtl, n_eqtl)
+    cov = np.einsum("gk,ghkl,hl->gh", eqtl_weight, rho_block, eqtl_weight)
+    var = np.diag(cov).copy()
+    var = np.where(var < 1e-12, 1.0, var)
+    corr = cov / np.sqrt(np.outer(var, var))
+    corr *= r2
+    np.fill_diagonal(corr, 1.0)
+    return corr

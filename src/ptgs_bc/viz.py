@@ -158,5 +158,29 @@ def plot_prior_comparison(compare_df, ax=None):
     return ax
 
 
+def plot_corr_recovery(true_corr, est_corr, ax=None):
+    """Scatter of upper-triangle TRUE vs. ESTIMATED gene-gene correlation entries.
+
+    For checking how far `structure.estimate_gene_correlation` (or any other estimate) drifts
+    from `simulate_twas.true_grex_correlation`'s closed-form oracle — a diagonal cloud means
+    the estimate is trustworthy; a flattened one means the `graph_horseshoe` prior is working
+    from a noisy/wrong graph.
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    sns.set_theme(style="whitegrid")
+    iu = np.triu_indices_from(np.asarray(true_corr), k=1)
+    xs = np.asarray(true_corr)[iu]; ys = np.asarray(est_corr)[iu]
+    if ax is None:
+        _, ax = plt.subplots(figsize=(4.5, 4.5))
+    ax.plot([-1, 1], [-1, 1], "--", color="gray", zorder=1)
+    sns.scatterplot(x=xs, y=ys, ax=ax, s=20, alpha=0.4, zorder=2)
+    rmse = float(np.sqrt(np.mean((xs - ys) ** 2)))
+    ax.set_xlabel("true correlation"); ax.set_ylabel("estimated correlation")
+    ax.set_title(f"Gene-gene correlation recovery (RMSE={rmse:.3f})")
+    ax.set_aspect("equal", adjustable="box")
+    return ax
+
+
 # Back-compat alias (earlier name).
 plot_fold_comparison = plot_comparison
